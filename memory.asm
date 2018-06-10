@@ -130,3 +130,63 @@ mallocz:pop	bc
 	call	mfree
 	xor	a
 	ret
+
+; Test and initialization of memory
+inittab:defw	$5D00	; leave space for screen 0, system variables and stack, also bank 5
+	defw	$8000	; also bank 2
+	defw	$C000
+	defw	$C001
+	defw	$C003
+	defw	$C004
+	defw	$C006
+	defw	$DB07	; leave space for screen 1
+inittab_end:
+
+minit:	ld	de,inittab
+	ld	b,inittab_end-inittab
+minitl0:ld	a,(de)
+	ld	c,a
+	exx
+	bank
+	exx
+	inc	de
+	ld	a,(de)
+	ld	h,a
+	ld	l,0
+minitl1:inc	a
+	ld	(hl),c
+	inc	l
+	ld	(hl),a
+	or	$C0
+	inc	a
+	ld	a,(hl)
+	inc	hl	; do not touch Z flag
+	jr	nz,minitl1
+	ld	a,l
+	rrca
+	ld	l,255
+	ld	(hl),a
+	djnz	minitl0
+	ld	hl,0
+	ld	(free_list),hl
+	ld	hl,inittab
+	ld	b,inittab_end-inittab
+	ld	e,0
+minitl2:ld	a,(hl)
+	ld	c,a
+	inc	hl
+	exx
+	bank
+	exx
+	ld	d,(hl)
+	inc	hl
+	ld	a,(de)
+	cp	c
+	jr	nz,banknf	; bank not found
+	push	hl
+	ld	l,c
+	ld	h,d
+	call	mfree
+	ld	e,0
+	pop	hl
+banknf:	djnz	minitl2
