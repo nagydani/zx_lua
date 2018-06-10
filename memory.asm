@@ -132,6 +132,7 @@ mallocz:pop	bc
 	ret
 
 ; Test and initialization of memory
+; TODO: Optimize so that non-contended memory is used first
 inittab:defw	$5D00	; leave space for screen 0, system variables and stack, also bank 5
 	defw	$8000	; also bank 2
 	defw	$C000
