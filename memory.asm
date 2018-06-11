@@ -338,7 +338,7 @@ mnext1:	push	af
 	inc	l
 	ld	h,(hl)
 	inc	l
-	ld	(iy-MSTR_P-PTR_IY),l
+	ld	(iy+MSTR_P-PTR_IY),l
 	bank
 	ld	l,0
 	pop	bc
