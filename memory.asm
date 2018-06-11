@@ -12,7 +12,9 @@
 ; byte 1: high byte of page address
 ;
 ; Root page structure
-; byte 255: number of pages in the block (1 .. 127)
+; byte 255:
+;   bits 0-6: number of pages in the block (1 .. 127)
+;   bit	7: GC marker bit, always 0 for free blocks
 ; For 1-page blocks, bytes 0..254 contain the payload
 ; For at most 2-page blocks, bytes 0..253 contain at most 127 page identifiers
 ;
@@ -33,6 +35,61 @@ bank_r:	ld	c,a
 	out	(c),a
 	ret
 
+mshort1:push	de
+	ld	l,255
+	ld	b,(hl)
+	push	bc
+	inc	l
+	ld	e,(hl)
+	inc	l
+	ld	d,(hl)
+	ld	a,(BANK_M)
+	and	7
+	ld	l,a		; restore l
+	ex	de,hl
+	push	hl
+	call	pcopy
+	ex	de,hl
+	dec	l
+	pop	af
+	and	$80	; retain GC bit
+	inc	a
+	ld	(hl),a
+	call	pfree_hl
+	pop	hl
+	jr	pfree
+
+; Shorten block by one page
+; DO NOT call on single-page blocks!
+; Input: HL = root block
+mshort:	ld	a,l
+	bank
+	ld	l,255
+	dec	(hl)
+	ld	l,(hl)
+	sla	l
+	ld	e,(hl)
+	inc	l
+	ld	d,(hl)
+	ld	a,l
+	cp	3
+	jr	z,mshort1	; becomes single-page block
+	; continue with pfree_hl
+pfree_hl:
+	ex	de,hl
+	; continue with pfree
+
+; Page deallocation
+; Input: HL = page identifier
+pfree:	ld	a,l		; make it a single-page block
+	bank
+	ld	l,255
+	ld	(hl),1
+	ld	a,(BANK_M)	; restore L
+	and	7
+	ld	l,a
+	; continue with mfree
+
 ; Block deallocation
 ; Input: HL = block identifier
 mfree:	ld	de,(FREE_L)
@@ -40,6 +97,7 @@ mfree:	ld	de,(FREE_L)
 	ld	a,l
 	bank
 	ld	l,255
+	res	7,(hl)	; clear GC bit
 	ld	a,(hl)
 	inc	l
 	cp	1	; single-page block?
@@ -137,6 +195,91 @@ mallocl:push	bc
 mallocz:pop	bc
 	call	mfree
 	xor	a
+	ret
+
+; Copy page content
+; Input:
+; HL = source page
+; DE = target page
+; Output:
+; HL' = source page
+; DE' = destination page
+; destination page paged in, pointed by DE.
+pcopy:	push	hl
+	push	de
+	exx
+	pop	de
+	pop	hl
+	ld	b,0
+pcopyl:	exx
+	ld	a,l
+	bank
+	exx
+	ld	l,b
+	ld	a,(hl)
+	ex	af,af'
+	exx
+	ld	a,e
+	bank
+	exx
+	ld	e,b
+	ex	af,af'
+	ld	(de),a
+	djnz	pcopyl
+	ret
+
+; Append page to block
+; Input: HL = root page
+mappend:ld	a,l
+	bank
+	ld	l,255
+	ld	a,(hl)
+	inc	a
+	and	$7F
+	ret	z	; block too long
+	push	hl
+	call	palloc
+	pop	hl
+	ret	z	; memory full
+	ld	a,(hl)
+	cp	1
+	jr	z,mapp1	; append second page
+	inc	(hl)
+	add	a,a
+	ld	l,a
+	ld	(hl),e
+	inc	l
+	ld	(hl),d
+	ret
+mapp1:	push	de
+	push	hl
+	call	palloc
+	pop	hl
+	jr	nz,mapp2
+	pop	hl
+	ld	a,l
+	bank
+	ld	l,255
+	ld	(hl),1
+	and	7
+	call	mfree	; free second page, if failed to allocate third
+	cp	a	; set Z flag
+	ret
+mapp2:	call	pcopy
+	exx
+	ld	a,l	; make first page root
+	bank
+	ld	l,255
+	ld	(hl),2
+	inc	l
+	ld	(hl),e
+	inc	l
+	ld	(hl),d
+	pop	de
+	inc	l
+	ld	(hl),e
+	inc	l	; clears Z flag
+	ld	(hl),d
 	ret
 
 ; Test and initialization of memory
