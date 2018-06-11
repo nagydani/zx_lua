@@ -3,7 +3,8 @@
 ; =========================
 BANK_M:	equ $5B5C	; Shadowing banking and screen switching port $7FFD
 FREE_L:	equ $5B83	; First block in the linked list of free blocks
-
+MSTR_P:	equ $5BFD	; IY-$3D   Page index for stream operations
+ROOT_P:	equ $5BFE	; IY-$3C   Root page for stream operations
 ; =========================
 ; Standard System Variables
 ; =========================
@@ -124,3 +125,4 @@ MEMBOT:	equ $5C92	; IY+$58   Calculator's memory area - used to store numbers th
 			; IY+$76   Not used on standard Spectrum. [Used by ZX Interface 1 Edition 2 for printer WIDTH]
 RAMTOP:	equ $5CB2	; IY+$78   Address of last byte of BASIC system area.
 
+PTR_IY:	equ $5C3A

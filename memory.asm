@@ -35,6 +35,7 @@ bank_r:	ld	c,a
 	out	(c),a
 	ret
 
+; Helper function for mshort. DO NOT call!
 mshort1:push	de
 	ld	l,255
 	ld	b,(hl)
@@ -55,7 +56,7 @@ mshort1:push	de
 	and	$80	; retain GC bit
 	inc	a
 	ld	(hl),a
-	call	pfree_hl
+	call	pfree_de
 	pop	hl
 	jr	pfree
 
@@ -74,8 +75,11 @@ mshort:	ld	a,l
 	ld	a,l
 	cp	3
 	jr	z,mshort1	; becomes single-page block
-	; continue with pfree_hl
-pfree_hl:
+	; continue with pfree_de
+
+; Page deallocation
+; Input: DE = page identifier
+pfree_de:
 	ex	de,hl
 	; continue with pfree
 
@@ -280,6 +284,65 @@ mapp2:	call	pcopy
 	ld	(hl),e
 	inc	l	; clears Z flag
 	ld	(hl),d
+	ret
+
+; Seek into block
+; NO protection against overflow!
+; Input:
+; DE = root page identifier
+; BC = offset
+; Output:
+; HL = pointing to seeked location
+; Appropriate bank paged in
+mseek:	ld	(ROOT_P),de
+	ld	a,e
+	ld	e,c
+	ld	d,b
+	bank
+	ld	h,(iy+ROOT_P+1-PTR_IY)
+	ld	l,255
+	ld	a,(hl)
+	and	$7F
+	dec	a
+	jr	nz,mseek1	; more than one page in the block
+	ld	l,e
+	ret
+mseek1:	ld	a,d
+	add	a,a
+	ld	(MSTR_P),a
+	ld	l,a
+	ld	a,(hl)
+	inc	l
+	ld	h,(hl)
+	bank
+	ld	l,e
+	ret
+
+; Step one byte further in the block
+; NO protection against overflow!
+; Input:
+; HL = pointing to current location
+; Output:
+; HL = pointing to next location
+mnext:	macro
+	inc	l
+	call	z, mnext1
+	endm
+mnext1:	push	af
+	push	bc
+	ld	hl,(ROOT_P)
+	ld	a,l
+	bank
+	ld	l,(iy+MSTR_P-PTR_IY)
+	ld	a,(hl)
+	inc	l
+	ld	h,(hl)
+	inc	l
+	ld	(iy-MSTR_P-PTR_IY),l
+	bank
+	ld	l,0
+	pop	bc
+	pop	af
 	ret
 
 ; Test and initialization of memory
