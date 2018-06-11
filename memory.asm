@@ -21,14 +21,22 @@
 ; Page in memory bank
 ; Input: A = memory bank
 bank:	macro
+	call	bank_r
+	endm
+
+bank_r:	ld	c,a
+	ld	a,(BANK_M)
+	and	$F8
+	or	c
+	ld	(BANK_M),a
 	ld	bc,$7FFD
 	out	(c),a
-	endm
+	ret
 
 ; Block deallocation
 ; Input: HL = block identifier
-mfree:	ld	de,(free_list)
-	ld	(free_list),hl
+mfree:	ld	de,(FREE_L)
+	ld	(FREE_L),hl
 	ld	a,l
 	bank
 	ld	l,255
@@ -48,7 +56,7 @@ mfree1:	ld	(hl),e
 
 ; Page allocation
 ; Output: DE = page identifier, Z set on error
-palloc:	ld	hl,(free_list)
+palloc:	ld	hl,(FREE_L)
 	ld	a,l
 	or	h
 	ret	z	; memory full
@@ -81,8 +89,8 @@ palloc1:inc	l
 	inc	l	; clears Z flag
 	ld	h,(hl)
 	ld	l,a
-	ld	de,(free_list)
-	ld	(free_list),hl
+	ld	de,(FREE_L)
+	ld	(FREE_L),hl
 	ret
 
 ; Block allocation
@@ -132,10 +140,10 @@ mallocz:pop	bc
 	ret
 
 ; Test and initialization of memory
-; TODO: Optimize so that non-contended memory is used first
-inittab:defw	$5D00	; leave space for screen 0, system variables and stack, also bank 5
-	defw	$8000	; also bank 2
+inittab:
+	defw	endp2	; leave space for interpreter, also bank 2
 	defw	$C000
+	defw	$6000	; leave space for screen 0, system variables and stack, also bank 5
 	defw	$C001
 	defw	$C003
 	defw	$C004
@@ -143,6 +151,7 @@ inittab:defw	$5D00	; leave space for screen 0, system variables and stack, also 
 	defw	$DB07	; leave space for screen 1
 inittab_end:
 
+; Starting point
 minit:	ld	de,inittab
 	ld	b,inittab_end-inittab
 minitl0:ld	a,(de)
@@ -169,7 +178,7 @@ minitl1:inc	a
 	ld	(hl),a
 	djnz	minitl0
 	ld	hl,0
-	ld	(free_list),hl
+	ld	(FREE_L),hl
 	ld	hl,inittab
 	ld	b,inittab_end-inittab
 	ld	e,0
