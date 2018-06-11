@@ -1,7 +1,7 @@
 ; Virtual Memory Management
 ;
 ; Glossary:
-; bank: 16 kilobytes of memory
+; bank: 16 kilobytes of physical RAM
 ; page: 256 bytes of memory
 ; block: a block of virtual memory of at least 1, at most 127 pages (32512 bytes)
 ;
@@ -13,7 +13,7 @@
 ;
 ; Root page structure
 ; byte 255:
-;   bits 0-6: number of pages in the block (1 .. 127)
+;   bits 0-6: number of child pages of the block (1 .. 127) or 0 for single-page blocks
 ;   bit	7: GC marker bit, always 0 for free blocks
 ; For 1-page blocks, bytes 0..254 contain the payload
 ; For at most 2-page blocks, bytes 0..253 contain at most 127 page identifiers
@@ -36,28 +36,15 @@ bank_r:	ld	c,a
 	ret
 
 ; Helper function for mshort. DO NOT call!
-mshort1:push	de
-	ld	l,255
-	ld	b,(hl)
-	push	bc
-	inc	l
-	ld	e,(hl)
-	inc	l
-	ld	d,(hl)
-	ld	a,(BANK_M)
+mshort1:ld	a,(BANK_M)
 	and	7
-	ld	l,a		; restore l
+	ld	l,a
 	ex	de,hl
-	push	hl
 	call	pcopy
-	ex	de,hl
-	dec	l
-	pop	af
-	and	$80	; retain GC bit
-	inc	a
-	ld	(hl),a
-	call	pfree_de
-	pop	hl
+	exx
+	xor	a
+	ld	e,255
+	ld	(de),a
 	jr	pfree
 
 ; Shorten block by one page
@@ -72,8 +59,7 @@ mshort:	ld	a,l
 	ld	e,(hl)
 	inc	l
 	ld	d,(hl)
-	ld	a,l
-	cp	3
+	dec	l
 	jr	z,mshort1	; becomes single-page block
 	; continue with pfree_de
 
@@ -88,7 +74,7 @@ pfree_de:
 pfree:	ld	a,l		; make it a single-page block
 	bank
 	ld	l,255
-	ld	(hl),1
+	ld	(hl),0
 	ld	a,(BANK_M)	; restore L
 	and	7
 	ld	l,a
@@ -104,7 +90,7 @@ mfree:	ld	de,(FREE_L)
 	res	7,(hl)	; clear GC bit
 	ld	a,(hl)
 	inc	l
-	cp	1	; single-page block?
+	or	a	; single-page block?
 	jr	z, mfree1
 	ld	a,(hl)	; get to first page
 	inc	l
@@ -122,52 +108,61 @@ palloc:	ld	hl,(FREE_L)
 	ld	a,l
 	or	h
 	ret	z	; memory full
+	ld	a,l
 	bank
 	ld	l,255
+	ld	a,(hl)
+	add	a,a
+	jr	z,palloc1	; allocate single-page block
 	dec	(hl)
-	jr	z,palloc1
-	ld	l,(hl)
-	sla	l
-	ld	e,(hl)
-	inc	l
+	ld	l,a
+	dec	l
 	ld	d,(hl)
 	dec	l
-	dec	l
-	dec	l
-	ret	nz	; block has not become single-page
-	ld	a,(hl)
-	inc	l
-	ld	h,(hl)
+	ld	e,(hl)
+	ret	nz	; has not become single-page
+	ld	a,e
 	bank
-	ld	l,255
-	ld	(hl),1
+	ex	de,hl
+	ld	l,0
+	ld	c,(hl)
+	inc	l
+	ld	b,(hl)
+	push	bc
+	or	7
 	ld	l,a
-	push	de
-	call	mfree	; clears Z flag
-	pop	de
+	ex	de,hl
+	ld	a,(FREE_L)
+	bank
+	pop	bc
+	ld	(hl),c
+	inc	l
+	ld	(hl),b
 	ret
-palloc1:inc	l
-	ld	a,(hl)
-	inc	l	; clears Z flag
-	ld	h,(hl)
+palloc1:ld	l,a
+	ld	e,(hl)
+	ld	a,(BANK_M)
+	and	7
+	inc	l	; clear Z flag
+	ld	d,(hl)
 	ld	l,a
-	ld	de,(FREE_L)
+	ex	de,hl
 	ld	(FREE_L),hl
 	ret
 
 ; Block allocation
-; Input: B = number of pages in block (1 .. 127)
+; Input: B = number of pages in block (0 .. 127)
 ; Output: DE = root page identifier, Z set on error
 malloc:	ld	a,b
-	cp	1
-	jr	nz,malloc1
+	or	a
+	jr	nz,malloc1 ; multi-page block
 	call	palloc
 	ret	z	; unable to allocate single page
 	ld	a,e
 	bank
 	ld	h,d
 	ld	l,255
-	ld	(hl),1
+	ld	(hl),0
 	ret
 malloc1:push	bc
 	call	palloc
@@ -246,44 +241,27 @@ mappend:ld	a,l
 	pop	hl
 	ret	z	; memory full
 	ld	a,(hl)
-	cp	1
-	jr	z,mapp1	; append second page
-	inc	(hl)
 	add	a,a
+	jr	z,mapp1	; convert to multi-page
+	inc	(hl)
 	ld	l,a
 	ld	(hl),e
 	inc	l
 	ld	(hl),d
 	ret
-mapp1:	push	de
-	push	hl
-	call	palloc
-	pop	hl
-	jr	nz,mapp2
-	pop	hl
+mapp1:	ld	a,(BANK_M)
+	and	7
+	ld	l,a
+	call	pcopy
+	exx
 	ld	a,l
 	bank
-	ld	l,255
+	ld	l,1
+	ld	(hl),d
+	dec	l
+	ld	(hl),e
+	dec	l	; also clears Z flag
 	ld	(hl),1
-	and	7
-	call	mfree	; free second page, if failed to allocate third
-	cp	a	; set Z flag
-	ret
-mapp2:	call	pcopy
-	exx
-	ld	a,l	; make first page root
-	bank
-	ld	l,255
-	ld	(hl),2
-	inc	l
-	ld	(hl),e
-	inc	l
-	ld	(hl),d
-	pop	de
-	inc	l
-	ld	(hl),e
-	inc	l	; clears Z flag
-	ld	(hl),d
 	ret
 
 ; Seek into block
@@ -303,7 +281,6 @@ mseek:	ld	(ROOT_P),de
 	ld	l,255
 	ld	a,(hl)
 	and	$7F
-	dec	a
 	jr	nz,mseek1	; more than one page in the block
 	ld	l,e
 	ret
