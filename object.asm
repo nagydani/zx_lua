@@ -4,23 +4,23 @@
 ; string buffer: a buffer containing strings or program code
 ; value buffer: a buffer containing an array of values
 ;
-; value: 7 bytes, primitive value or reference
+; value: 8 bytes, primitive value or reference
 ;
 ; Value structure
-; byte 0: type
-;	0 	nil
-;	1 	boolean
-;	2 	number
-;	3 	string
-;	4 	function
-;	5 	userdata
-;	6 	thread
-;	7 	table
+; byte 0-1: type * 0x2000 | hash ^ 0x1FFF
+;   0	0 	nil
+;  32	1 	boolean
+;  64	2 	number
+;  96	3 	string
+; 128	4 	function
+; 160	5 	userdata
+; 192	6 	thread
+; 224	7 	table
 ;
 ; string value structure
-; byte 1-2:	buffer identifier
-; byte 3-4:	offset into the buffer
-; byte 5-6;	string length
+; byte 2-3:	buffer identifier
+; byte 4-5:	offset into the buffer
+; byte 6-7;	string length
 ;
 ; String buffer structure
 ; byte 0-1:	reference counter
@@ -32,40 +32,3 @@
 ; byte 4-10:	first value
 ; byte 11-:	subsequent values
 
-; Multiplication by 7
-; Input:
-; BC = coefficient between 0 and 8191
-; Output:
-; HL = BC * 7
-mul7:	ld	l,c
-	ld	h,b
-	add	hl,hl
-	add	hl,hl
-	add	hl,hl
-	sbc	hl,bc
-	ret
-
-; Division by 7
-; Input:
-; HL = nominator between 7 and 32767
-; Output:
-; HL = HL / 7
-div7:	ld	e,l
-	ld	d,h
-	ld	b,4
-div7l:	srl	d
-	rr	e
-	srl	d
-	rr	e
-	srl	d
-	rr	e
-	add	hl,de
-	djnz	div7l
-	srl	h
-	rr	l
-	srl	h
-	rr	l
-	srl	h
-	rr	l
-	inc	hl
-	ret
