@@ -1,9 +1,12 @@
 ; Virtual Memory Management
 ;
-; Glossary:
+; Glossary
 ; bank: 16 kilobytes of physical RAM
 ; page: 256 bytes of memory
 ; block: a block of virtual memory of at least 1, at most 127 pages (32512 bytes)
+; buffer: a block with data
+;
+; Buffer Identifier: 2 bytes, block identifier
 ;
 ; Block Identifier: 2 bytes, root page identifier
 ;
@@ -17,6 +20,9 @@
 ;   bit	7: GC marker bit, always 0 for free blocks
 ; For 1-page blocks, bytes 0..254 contain the payload
 ; For at most 2-page blocks, bytes 0..253 contain at most 127 page identifiers
+;
+; Buffer structure
+; byte 254 of root page: number of payload bytes in last page
 ;
 ; Free memory: A linked list of reusable blocks
 
@@ -150,13 +156,41 @@ palloc1:ld	l,a
 	ld	(FREE_L),hl
 	ret
 
+; Buffer allocation
+; Input: BC buffer length
+; Output: DE = block identifier, Z set on error
+balloc:	push	bc
+	ld	a,b
+	or	a
+	jr	nz,balloc1	; multi-page block
+	ld	a,c
+	cp	254
+	jr	nc,balloc2	; multi-page block
+	call	msingle
+	pop	bc
+	ret	z
+	dec	l	; clear Z flag
+	ld	(hl),c
+	ret
+balloc1:ld	a,c
+	or	a
+	jr	z,ballocz	;no increment
+balloc2:inc	b
+ballocz:push	bc
+	call	malloc1
+	pop	bc
+	ret	z
+	dec	l	; clear Z flag, l = 254
+	ld	(hl),c
+	ret
+
 ; Block allocation
-; Input: B = number of pages in block (0 .. 127)
+; Input: B = number of child pages in block (0 .. 127)
 ; Output: DE = root page identifier, Z set on error
 malloc:	ld	a,b
 	or	a
 	jr	nz,malloc1 ; multi-page block
-	call	palloc
+msingle:call	palloc	; allocate single-page block
 	ret	z	; unable to allocate single page
 	ld	a,e
 	bank
@@ -186,14 +220,15 @@ mallocl:push	bc
 	sla	l
 	dec	l
 	ld	(hl),d
-	dec	l	; cannot be 0 in the last iteration
+	dec	l
 	ld	(hl),e
 	pop	bc
 	djnz	mallocl
+	dec	l	; reset Z flag
 	ret
 mallocz:pop	bc
 	call	mfree
-	xor	a
+	xor	a	; set Z flag
 	ret
 
 ; Copy page content
@@ -227,8 +262,114 @@ pcopyl:	exx
 	djnz	pcopyl
 	ret
 
+; Buffer resize
+; Input:
+; HL = block identifier
+; BC = new buffer length
+; Output: Z set on error
+bresize:push	hl
+	push	bc
+	call	blen
+	pop	hl
+	push	hl
+	ld	a,b
+	sub	h
+	jr	z,bres0	; maybe no resize
+	jr	c,bgrow	; grow
+	neg
+	pop	bc
+	pop	hl
+	ld	b,a
+bshrink:push	bc
+	push	hl
+	call	mshort
+	pop	hl
+	pop	bc
+	djnz	bshrink
+	push	hl
+	ld	a,l
+	bank
+	ld	l,254
+	ld	(hl),c
+	inc	l
+	ld	a,(hl)
+	dec	a
+	pop	hl
+	ret	nz
+	or	c
+	jr	z,bsh_0	; if C=0 (256 bytes) don't shrink
+	inc	c
+	jr	z,bsh_0	; if C=255 (255 bytes) don't shrink
+bshr_s:	push	af	; old C in A
+	push	hl
+	call	mshort
+	pop	hl
+	ld	a,l
+	bank
+	ld	l,254
+	pop	af
+	ld	(hl),a
+bsh_0:	or	1	; reset Z flag
+	ret
+bres0:	cp	h
+	jr	nz,bres_no	; no resize for sure
+	ld	a,c
+	cp	l
+	jr	z,bsh_0		; no size change
+	jr	c,bgrow0	; maybe grow single-page buffer
+	inc	a
+	pop	hl
+	jr	z,bshr_s	; if old length 255, shrink further
+	ret
+bres_no:pop	de
+	pop	hl
+	ld	a,l
+	bank
+	ld	l,254
+	ld	(hl),e
+	inc	l
+	ret
+bgrow0:	inc	l
+	pop	hl
+	ret	nz	; if new length not 255, do not grow
+	call	mappend
+	ret	z	; out of memory
+	dec	l
+	ld	(hl),255
+	ret
+bgrow:	ld	b,a
+	pop	de	; new length
+	pop	hl
+	ld	c,0
+bgrowl:	push	bc
+	push	hl
+	push	de
+	call	mappend
+	pop	de
+	pop	hl
+	pop	bc
+	inc	c
+	jr	z,brefree
+	djnz	bgrowl
+	ld	a,l
+	bank
+	ld	l,254
+	ld	(hl),e
+	inc	l	; clear Z
+	ret
+brefree:ld	b,c
+brefrl:	push	bc
+	push	hl
+	call	mshort
+	pop	hl
+	pop	bc
+	djnz	brefrl
+	xor	a	; not enough memory
+	ret
+
 ; Append page to block
 ; Input: HL = root page
+; Output: Z set on error
 mappend:ld	a,l
 	bank
 	ld	l,255
@@ -264,6 +405,47 @@ mapp1:	ld	a,(BANK_M)
 	ld	(hl),1
 	ret
 
+; Buffer length
+; Input:
+; HL = root page
+; Output:
+; BC = buffer length
+blen:	ld	a,l
+	bank
+	ld	l,255
+	ld	b,(hl)
+	dec	l
+	ld	c,(hl)
+	xor	a
+	cp	b
+	ret	z
+blen1:	cp	c
+	ret	z
+	dec	b
+	ret
+
+; Seek into buffer
+; Input:
+; DE = root page
+; BC = offset
+; Output:
+; HL = pointing to seeked location
+; Appropriate bank paged in
+; C flag set, if successful
+bseek:	push	de
+	push	bc
+	ld	l,e
+	ld	h,d
+	call	blen
+	ld	l,c
+	ld	h,b
+	and	a
+	sbc	hl,bc
+	pop	bc
+	pop	de
+	ret	nc
+	; continue with mseek
+
 ; Seek into block
 ; NO protection against overflow!
 ; Input:
@@ -272,6 +454,7 @@ mapp1:	ld	a,(BANK_M)
 ; Output:
 ; HL = pointing to seeked location
 ; Appropriate bank paged in
+; C flag set
 mseek:	ld	(ROOT_P),de
 	ld	a,e
 	ld	e,c
@@ -283,6 +466,7 @@ mseek:	ld	(ROOT_P),de
 	and	$7F
 	jr	nz,mseek1	; more than one page in the block
 	ld	l,e
+	scf
 	ret
 mseek1:	ld	a,d
 	add	a,a
@@ -293,6 +477,61 @@ mseek1:	ld	a,d
 	ld	h,(hl)
 	bank
 	ld	l,e
+	scf
+	ret
+
+; Restore pointer from stream
+; Input:
+; HL=memory pointer
+; ROOT_P=root page of block being read
+; MSTR_P=streamed page pointer
+; Output:
+; DE=root page being seeked
+; BC=offset of the pointed byte
+mptr:	ld	de,(ROOT_P)
+	ld	a,e
+	bank
+	ld	c,l
+	ld	h,d
+	ld	l,255
+	xor	a
+	ld	b,a
+	cp	(hl)
+	ret	z	; one-page block
+	ld	a,(MSTR_P)
+	srl	a
+	ld	b,a
+	ret
+
+; Copy block content
+; Input:
+; DE, BC = source pointer
+; DE',BC' = destination pointer
+; IX = length
+mcopy:	push	bc
+	push	de
+	call	mseek
+	pop	de
+	pop	bc
+	ld	a,(hl)
+	inc	bc
+	ex	af,af'
+	exx
+	push	bc
+	push	de
+	call	mseek
+	pop	de
+	pop	bc
+	ex	af,af'
+	ld	(hl),a
+	inc	bc
+	exx
+	dec	ix
+	defb	$DD
+	ld	a,h	; ixh
+	defb	$DD
+	or	l	; ixl
+	jr	nz,mcopy
 	ret
 
 ; Step one byte further in the block
