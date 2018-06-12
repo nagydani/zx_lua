@@ -3,6 +3,8 @@
 ; =========================
 BANK_M:	equ $5B5C	; Shadowing banking and screen switching port $7FFD
 FREE_L:	equ $5B83	; First block in the linked list of free blocks
+VALS:	equ $5BF4	; IY-$46   First element in a linked list of value buffers
+VALUE:	equ $5BF6	; IY-$44   Value register, 7 bytes
 MSTR_P:	equ $5BFD	; IY-$3D   Page index for stream operations
 ROOT_P:	equ $5BFE	; IY-$3C   Root page for stream operations
 ; =========================
